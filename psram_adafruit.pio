@@ -61,8 +61,8 @@ void qspi_write_program_init(PIO pio, uint state_machine, uint offset,
 	pio_sm_config config = qspi_write_program_get_default_config(offset);
 	qspi_program_common_init(pio, state_machine, &config, sclk_pin, sio_base_pin);
 
-	sm_config_set_in_shift(&config, true, true, 8);
-	sm_config_set_out_shift(&config, true, true, 8);
+	sm_config_set_in_shift(&config, false, true, 8);
+	sm_config_set_out_shift(&config, false, true, 8);
 
 	pio_sm_init(pio, state_machine, offset, &config);
 }

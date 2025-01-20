@@ -26,8 +26,8 @@ int state_machine = -1;
 int qspi_write_program_offset = -1;
 int qspi_read_program_offset = -1;
 
-uint8_t data_buffer[] = "ABC\0";
-uint data_len = 4;
+uint8_t data_buffer[] = "Hello Carter!\0";
+uint data_len = 14;
 
 int setup_qspi_write(){
 	if(state_machine < 0){
@@ -48,10 +48,8 @@ int setup_qspi_write(){
 int exec_qspi_write(uint8_t * data, uint32_t len){
 	pio_sm_put_blocking(pio, state_machine, 2*len-1);
 	for(int i = 0; i < len; i++){
-		printf("%x\t", data[i]);
-		pio_sm_put_blocking(pio, state_machine, data[i]);
+		pio_sm_put_blocking(pio, state_machine, data[i] << 24);
 	}
-	printf("\n");
 	return 0;
 }
 
@@ -75,24 +73,21 @@ int qspi_read_psram(uint32_t addr, uint8_t * data, uint32_t len){
 	pio_sm_put_blocking(pio, state_machine, addr | 0xEB000000);
 	pio_sm_put_blocking(pio, state_machine, 2*len-1);
 	for(int i = 0; i < len; i++){
-		uint32_t d = pio_sm_get_blocking(pio, state_machine);
-		printf("%x\t", d);
-		data[i] = d;
+		data[i] = pio_sm_get_blocking(pio, state_machine);
 	}
-	printf("\n");
 	return 0;
 }
 
 int spi_reset(){
-	uint8_t reset_enable_data[] = {0xF0, 0x0F, 0xF0, 0x0F};
+	uint8_t reset_enable_data[] = {0x0F, 0xF0, 0x0F, 0xF0};
 	exec_qspi_write(reset_enable_data, 4);
-	uint8_t reset_data[] = {0x0F, 0xF0, 0x0F, 0xF0};
+	uint8_t reset_data[] = {0xF0, 0x0F, 0xF0, 0x0F};
 	exec_qspi_write(reset_data, 4);
 	return 0;
 }
 
 int spi_enter_quad_mode(){
-	uint8_t enter_quad_data[] = {0x00, 0xFF, 0xF0, 0xF0};
+	uint8_t enter_quad_data[] = {0x00, 0xFF, 0x0F, 0x0F};
 	exec_qspi_write(enter_quad_data, 4);
 	return 0;
 }
@@ -108,7 +103,7 @@ int qspi_reset(){
 int qspi_write_psram(uint32_t addr, uint8_t * data, uint32_t len){
 	uint32_t len_full = 1 + 3 + len; // Command byte + address + data
 	uint8_t * buffer = (uint8_t *) malloc(len_full);
-	buffer[0] = 0x83;
+	buffer[0] = 0x38;
 	memcpy(&(buffer[1]), &addr, 3);
 	memcpy(&(buffer[4]), data, len);
 	exec_qspi_write(buffer, len_full);
