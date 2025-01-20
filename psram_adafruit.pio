@@ -1,0 +1,80 @@
+.program qspi_write
+; Bulk write data over QSPI
+; First 4 bytes are start address (stored in x)
+; Second 4 bytes are length (in nibbles) (stored in y)
+; Then data to write
+.side_set 2
+
+.wrap_target
+	pull block side 2
+	out x 32 side 0
+send_loop:
+	out pins 4 side 0
+	jmp x-- send_loop side 1
+.wrap
+
+.program qspi_read
+; Bulk read data over QSPI
+; First 4 bytes are start address (stored in x)
+; Second 4 bytes are length (in nibbles) (stored in y)
+.side_set 2
+
+.wrap_target
+	set pindirs 15 side 2		; set pins to outputs
+	pull block side 2			; wait for new start address
+	set x 7 side 0
+addr_send: 						; send read command + address (5 bytes) to chip via QSPI
+	out pins 4 side 0
+	jmp x-- addr_send side 1
+	set x 5 side 0				; wait 6 clock cycles between setting address and starting to read
+wait_cycle:
+	set pindirs 0 side 1		; set pins to inputs
+	jmp x-- wait_cycle side 0
+	out y 32 side 0				; load length count
+data_recv:
+	in pins 4 side 1
+	jmp y-- data_recv side 0
+.wrap
+
+% c-sdk {
+void qspi_program_common_init(PIO pio, uint state_machine, pio_sm_config * config,
+							 uint sclk_pin, uint sio_base_pin){
+	for(uint i = 0; i < 4; i++){
+		pio_gpio_init(pio, sio_base_pin + i);
+	}
+	pio_gpio_init(pio, sclk_pin);
+	pio_gpio_init(pio, sclk_pin + 1); // ce_n pin is sclk pin + 1
+
+	sm_config_set_in_pins(config, sio_base_pin);
+	sm_config_set_out_pins(config, sio_base_pin, 4);
+ 	sm_config_set_set_pins(config, sio_base_pin, 4);
+	pio_sm_set_consecutive_pindirs(pio, state_machine, sio_base_pin, 4, true);
+
+ 	sm_config_set_sideset_pins(config, sclk_pin);
+	pio_sm_set_consecutive_pindirs(pio, state_machine, sclk_pin, 2, true);
+
+	sm_config_set_clkdiv(config, 10.f);
+}
+
+void qspi_write_program_init(PIO pio, uint state_machine, uint offset,
+							 uint sclk_pin, uint sio_base_pin){
+	pio_sm_config config = qspi_write_program_get_default_config(offset);
+	qspi_program_common_init(pio, state_machine, &config, sclk_pin, sio_base_pin);
+
+	sm_config_set_in_shift(&config, true, true, 8);
+	sm_config_set_out_shift(&config, true, true, 8);
+
+	pio_sm_init(pio, state_machine, offset, &config);
+}
+
+void qspi_read_program_init(PIO pio, uint state_machine, uint offset,
+							 uint sclk_pin, uint sio_base_pin){
+	pio_sm_config config = qspi_read_program_get_default_config(offset);
+	qspi_program_common_init(pio, state_machine, &config, sclk_pin, sio_base_pin);
+
+	sm_config_set_in_shift(&config, false, true, 8);
+	sm_config_set_out_shift(&config, false, true, 32);
+
+	pio_sm_init(pio, state_machine, offset, &config);
+}
+%}
