@@ -17,7 +17,7 @@ pico_generate_pio_header(psram_adafruit
 ${CMAKE_CURRENT_LIST_DIR}/psram_adafruit.pio
 )
 
-target_link_libraries(psram_adafruit pico_stdlib hardware_pio)
+target_link_libraries(psram_adafruit pico_stdlib hardware_pio hardware_dma)
 
 pico_enable_stdio_usb(psram_adafruit 1)
 pico_enable_stdio_uart(psram_adafruit 0)
