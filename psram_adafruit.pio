@@ -68,7 +68,7 @@ void qspi_program_common_init(PIO pio, uint state_machine, pio_sm_config * confi
 
 	hw_set_bits(&pio->input_sync_bypass, 0xfu << sio_base_pin);
 
-	sm_config_set_clkdiv(config, 10.f);
+	sm_config_set_clkdiv(config, 4.f);
 
 	sm_config_set_in_shift(config, false, true, 32);
 	sm_config_set_out_shift(config, false, true, 32);
