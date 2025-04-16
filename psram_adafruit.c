@@ -4,156 +4,144 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
-#include "hardware/dma.h"
 
+// #include "spi.pio.h"
 #include "psram_adafruit.pio.h"
 
 /**
    Pinout:
 
-   GPIO 18: SI/SIO0
-   GPIO 19: SO/SIO1
-   GPIO 20: SIO2
-   GPIO 21: SIO3
-   GPIO 26: SCLK
-   GPIO 27: CS_n
+   GPIO 0: SO/SIO1
+   GPIO 1: SI/SIO[0]
+   GPIO 2: SCLK
+   GPIO 3: CS_n
       CS_n NEEDS a 4.7k pull-up in order for the chip to initialize correctly.
+   GPIO 4: passthru SCLK
+   GPIO 5: passthru CS_n
+   GPIO 6: output update
  */
 
 const uint LED_PIN = 25;
-const uint SCLK_PIN = 26;
-const uint SIO_BASE_PIN = 18;
+const uint SO_PIN = 0;
+const uint SI_PIN = 1;
+const uint SCLK_PIN = 2;
+const uint CS_n_PIN = 3;
+const uint LDAC_PIN = 6;
 
 const PIO pio = pio0;
 int state_machine = -1;
-int qspi_write_program_offset = -1;
-int qspi_read_program_offset = -1;
-int qspi_write_dma_channel = -1;
-int qspi_read_dma_channel = -1;
+int spi_write_program_offset = -1;
+int spi_read_program_offset = -1;
 
-const uint8_t DATA[] = "Hello Carter!\0\0\0";
-const uint data_len = 16;
-uint8_t data_buffer[16];
-
-inline uint32_t round_len(uint32_t len){
-	return len/4 + ((len % 4) > 0);
-}
-
-int setup_qspi_write(){
+void setup_write(){
 	if(state_machine < 0){
 		state_machine = pio_claim_unused_sm(pio, true);
 	}
 	else{
 		pio_sm_set_enabled(pio, state_machine, false);
 	}
-	if(qspi_write_program_offset < 0){
-		qspi_write_program_offset = pio_add_program(pio, &qspi_write_program);
+	if(spi_write_program_offset < 0){
+		spi_write_program_offset = pio_add_program(pio, &spi_write_program);
 	}
-	qspi_write_program_init(pio, state_machine, qspi_write_program_offset, SCLK_PIN, SIO_BASE_PIN);
-	pio_sm_set_enabled(pio, state_machine, true);
-
-	return 0;
+	spi_write_program_init(pio, state_machine, spi_write_program_offset, SCLK_PIN, SI_PIN);
+	pio_sm_set_enabled(pio, state_machine, true);	
 }
 
-int exec_qspi_write(uint32_t * data, uint32_t len){
-	pio_sm_put_blocking(pio, state_machine, 2*len-1);
-	for(int i = 0; i < round_len(len); i++){
-		pio_sm_put_blocking(pio, state_machine, data[i]);
-	}
-	return 0;
-}
-
-int setup_qspi_read(){
+void setup_read(){
 	if(state_machine < 0){
 		state_machine = pio_claim_unused_sm(pio, true);
 	}
 	else{
 		pio_sm_set_enabled(pio, state_machine, false);
 	}
-	if(qspi_read_program_offset < 0){
-		qspi_read_program_offset = pio_add_program(pio, &qspi_read_program);
+	if(spi_read_program_offset < 0){
+		spi_read_program_offset = pio_add_program(pio, &spi_read_passthru_program);
 	}
-	qspi_read_program_init(pio, state_machine, qspi_read_program_offset, SCLK_PIN, SIO_BASE_PIN);
-	pio_sm_set_enabled(pio, state_machine, true);
-
-	return 0;
+	spi_read_passthru_program_init(pio, state_machine, spi_read_program_offset,
+								   SCLK_PIN, SO_PIN, SI_PIN);
+	pio_sm_set_enabled(pio, state_machine, true);	
 }
 
-int qspi_read_psram(uint32_t addr, uint32_t * data, uint32_t len){
-	pio_sm_put_blocking(pio, state_machine, addr | 0xEB000000);
-	pio_sm_put_blocking(pio, state_machine, 2*len-1);
-	for(int i = 0; i < round_len(len); i++){
-		data[i] = pio_sm_get_blocking(pio, state_machine);
-	}
-	return 0;
+void reset(){
+	setup_write();
+	pio_sm_put_blocking(pio0, state_machine, 0x0000000F);
+	pio_sm_put_blocking(pio0, state_machine, 0x66990000);
 }
 
-int spi_reset(){
-	uint32_t reset_enable_data = 0x0FF00FF0;
-	exec_qspi_write(&reset_enable_data, 4);
-	uint32_t reset_data = 0xF00FF00F;
-	exec_qspi_write(&reset_data, 4);
-	return 0;
+void write_uint32(uint32_t addr, uint32_t data){
+	setup_write();
+	pio_sm_put_blocking(pio0, state_machine, 0x0000003F);
+	pio_sm_put_blocking(pio0, state_machine, 0x02000000 | addr);
+	pio_sm_put_blocking(pio0, state_machine, data);
 }
 
-int spi_enter_quad_mode(){
-	uint32_t enter_quad_data = 0x00FF0F0F;
-	exec_qspi_write(&enter_quad_data, 4);
-	return 0;
+uint32_t read_uint32(uint32_t addr){
+	setup_read();
+	pio_sm_put_blocking(pio0, state_machine, 0x03000000 | addr);
+	pio_sm_put_blocking(pio0, state_machine, 0x0000001F);
+	return pio_sm_get_blocking(pio0, state_machine);
 }
 
-int qspi_reset(){
-	uint32_t reset_enable_data = 0x66000000;
-	exec_qspi_write(&reset_enable_data, 1);
-	sleep_us(50);
-	uint32_t reset_data = 0x99000000;
-	exec_qspi_write(&reset_data, 1);
-	sleep_us(100);
-	return 0;
+const float e2_24 = 16777216.0;
+const float V_MAX = 4.096 * 2.5;
+const float DAC_SCALE = e2_24 / V_MAX;
+void write_voltage(uint32_t addr, float V){
+	uint32_t data = (((uint32_t) (DAC_SCALE * V)) & 0x00FFFFFF) << 8;
+	pio_sm_put_blocking(pio0, state_machine, 0x00000037);
+	pio_sm_put_blocking(pio0, state_machine, 0x02000000 | addr);
+	pio_sm_put_blocking(pio0, state_machine, data);
 }
 
-int qspi_write_psram(uint32_t addr, uint8_t * data, uint32_t len){
-	uint32_t len_full = 1 + round_len(len); // Command byte + address + data
-	uint32_t * buffer = (uint32_t *) malloc(len_full * sizeof(uint32_t));
-	buffer[0] = 0x38000000 | (addr & 0x00FFFFFF);
-	memcpy(&(buffer[1]), data, len);
-	exec_qspi_write(buffer, 4 + len);
-	free(buffer);
+uint32_t load_dac(uint32_t addr){
+	pio_sm_put_blocking(pio0, state_machine, 0x03000000 | addr);
+	pio_sm_put_blocking(pio0, state_machine, 0x00000017);
+	gpio_put(LDAC_PIN, 0);
+	sleep_us(1);
+	gpio_put(LDAC_PIN, 1);
+	return pio_sm_get_blocking(pio0, state_machine);
+}
+
+uint32_t read_id(){
+	setup_read();
+	pio_sm_put_blocking(pio0, state_machine, 0x9F000000);
+	pio_sm_put_blocking(pio0, state_machine, 0x0000001F);
+	return pio_sm_get_blocking(pio0, state_machine);
 }
 
 int main(){
 	// Set CS high on startup
-	gpio_init(SCLK_PIN+1);
-	gpio_set_dir(SCLK_PIN+1, GPIO_OUT);
-	gpio_put(SCLK_PIN+1, 1);
+	gpio_init(CS_n_PIN);
+	gpio_set_dir(CS_n_PIN, GPIO_OUT);
+	gpio_put(CS_n_PIN, 1);
 
 	stdio_init_all();
 	gpio_init(LED_PIN);
 	gpio_set_dir(LED_PIN, GPIO_OUT);
+	gpio_init(LDAC_PIN);
+	gpio_set_dir(LDAC_PIN, GPIO_OUT);
+	gpio_put(LDAC_PIN, 1);
 	sleep_ms(2000);
 	gpio_put(LED_PIN, 1);
 
-	setup_qspi_write();
-	spi_reset();
-	spi_enter_quad_mode();
-	sleep_ms(500);
+	printf("Reset\n");
+	reset();
+	sleep_us(200);
 
 	while(1){
-		printf("Reset\n");
-		printf("Write state: %d %d\n", state_machine, qspi_write_program_offset);
-		setup_qspi_write();
-		memcpy(data_buffer, DATA, data_len);
-		qspi_write_psram(0x00000000, data_buffer, data_len);
-		printf("Write complete\n");
-		bzero(data_buffer, data_len);
-		setup_qspi_read();
-		printf("Read state: %d %d\n", state_machine, qspi_read_program_offset);
-		sleep_ms(500);
-		qspi_read_psram(0x00000000, (uint32_t *) data_buffer, data_len);
-		printf(":%s:\n", data_buffer);
+		printf("Loading data to RAM\n");
+		setup_write();
+		for(int i = 0; i < 2000; i++){
+			write_voltage(i*3, (float) (1999 - i) / 2000.0 * V_MAX);
+		}
+
+		printf("Sending data to output\n");
+		setup_read();
+		for(int i = 0; i < 2000; i++){
+			load_dac(i*3);
+		}
+
 		sleep_ms(500);
 	}
-
 
 	return 0;
 }

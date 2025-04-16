@@ -1,7 +1,6 @@
-.program qspi_write
-; Bulk write data over QSPI
-; First 4 bytes are start address (stored in x)
-; Second 4 bytes are length (in nibbles) (stored in y)
+.program spi_write
+; Write data over SPI
+; First 4 bytes are length in bits (stored in x)
 ; Then data to write
 .side_set 2
 
@@ -9,83 +8,84 @@
 	pull block side 2
 	out x 32 side 0
 send_loop:
-	out pins 4 side 0
+	out pins 1 side 0
 	jmp x-- send_loop side 1
-	set pins 0 side 0
+	set pins 0 side 2
 .wrap
 
-.program qspi_read
-; Bulk read data over QSPI
-; First 4 bytes are start address (stored in x)
-; Second 4 bytes are length (in nibbles) (stored in y)
-.side_set 2
+.program spi_read_passthru
+; Bulk read data over SPI, copying to passthru device
+; First 4 bytes are length in bits (stored in x)
+; Then write command + address, finally data
+.side_set 4
 
 .wrap_target
-	pull block side 2			; wait for new start address
-	set x 7 side 0
+	pull block side 10			; wait for new start address
+	set x 31 side 8
 addr_send: 						; send read command + address (5 bytes) to chip via QSPI
-	out pins 4 side 0
-	jmp x-- addr_send side 1
-	nop side 0
-	out y 32 side 1				; load length count
-	nop side 0
-	nop side 1
-	nop side 0
-	nop side 1
-	nop side 0
-	nop side 1
-	nop side 0
-	nop side 1
-	set pindirs 0x0 side 0		; set pins to inputs
-	nop side 1
-	nop side 0
+	out pins 1 side 8
+	jmp x-- addr_send side 9
+	out x 32 side 0				; load length count
 data_recv:
-	in pins 4 side 1
-	jmp y-- data_recv side 0
-	set pindirs 0xF side 0		; set pins to outputs
+	in pins 1 side 5
+	jmp x-- data_recv side 0
+	push side 10
 .wrap
 
 % c-sdk {
-void qspi_program_common_init(PIO pio, uint state_machine, pio_sm_config * config,
-							 uint sclk_pin, uint sio_base_pin){
-	sm_config_set_in_pins(config, sio_base_pin);
-	sm_config_set_out_pins(config, sio_base_pin, 4);
- 	sm_config_set_set_pins(config, sio_base_pin, 4);
-	pio_sm_set_consecutive_pindirs(pio, state_machine, sio_base_pin, 4, true);
+void spi_write_program_init(PIO pio, uint state_machine, uint offset,
+							 uint sclk_pin, uint si_pin){
+	pio_sm_config config = spi_write_program_get_default_config(offset);
 
- 	sm_config_set_sideset_pins(config, sclk_pin);
+	sm_config_set_out_pins(&config, si_pin, 1);
+ 	sm_config_set_set_pins(&config, si_pin, 1);
+	pio_sm_set_consecutive_pindirs(pio, state_machine, si_pin, 1, true);
+
+	// ce_n pin is sclk pin + 1
+ 	sm_config_set_sideset_pins(&config, sclk_pin);
 	pio_sm_set_consecutive_pindirs(pio, state_machine, sclk_pin, 2, true);
 
-	for(uint i = 0; i < 4; i++){
-		pio_gpio_init(pio, sio_base_pin + i);
-		gpio_set_input_enabled(sio_base_pin + i, true);
-		// gpio_disable_pulls(sio_base_pin + i);
-		gpio_pull_up(sio_base_pin + i);
-		gpio_set_input_hysteresis_enabled(sio_base_pin + i, true);
-	}
+	pio_gpio_init(pio, si_pin);
 	pio_gpio_init(pio, sclk_pin);
-	pio_gpio_init(pio, sclk_pin + 1); // ce_n pin is sclk pin + 1
+	pio_gpio_init(pio, sclk_pin + 1);
 
-	hw_set_bits(&pio->input_sync_bypass, 0xfu << sio_base_pin);
+	sm_config_set_clkdiv(&config, 32.f);
 
-	sm_config_set_clkdiv(config, 4.f);
-
-	sm_config_set_in_shift(config, false, true, 32);
-	sm_config_set_out_shift(config, false, true, 32);
-}
-
-void qspi_write_program_init(PIO pio, uint state_machine, uint offset,
-							 uint sclk_pin, uint sio_base_pin){
-	pio_sm_config config = qspi_write_program_get_default_config(offset);
-	qspi_program_common_init(pio, state_machine, &config, sclk_pin, sio_base_pin);
+	sm_config_set_in_shift(&config, false, true, 32);
+	sm_config_set_out_shift(&config, false, true, 32);
 
 	pio_sm_init(pio, state_machine, offset, &config);
 }
 
-void qspi_read_program_init(PIO pio, uint state_machine, uint offset,
-							 uint sclk_pin, uint sio_base_pin){
-	pio_sm_config config = qspi_read_program_get_default_config(offset);
-	qspi_program_common_init(pio, state_machine, &config, sclk_pin, sio_base_pin);
+void spi_read_passthru_program_init(PIO pio, uint state_machine, uint offset,
+									uint sclk_pin, uint so_pin, uint si_pin){
+	pio_sm_config config = spi_read_passthru_program_get_default_config(offset);
+
+	sm_config_set_in_pins(&config, so_pin);
+	sm_config_set_out_pins(&config, si_pin, 1);
+ 	sm_config_set_set_pins(&config, si_pin, 1);
+	pio_sm_set_consecutive_pindirs(pio, state_machine, si_pin, 1, true);
+
+	// ce_n pin is sclk pin + 1; then duplicate for passthru
+ 	sm_config_set_sideset_pins(&config, sclk_pin);
+	pio_sm_set_consecutive_pindirs(pio, state_machine, sclk_pin, 4, true);
+
+	pio_gpio_init(pio, si_pin);
+	pio_gpio_init(pio, so_pin);
+	gpio_set_input_enabled(so_pin, true);
+	gpio_pull_up(so_pin);
+	gpio_set_input_hysteresis_enabled(so_pin, true);
+	pio_gpio_init(pio, sclk_pin);
+	pio_gpio_init(pio, sclk_pin + 1);
+	pio_gpio_init(pio, sclk_pin + 2);
+	pio_gpio_init(pio, sclk_pin + 3);
+
+	hw_set_bits(&pio->input_sync_bypass, 0x1u << so_pin);
+
+	sm_config_set_clkdiv(&config, 32.f);
+
+	sm_config_set_in_shift(&config, false, true, 32);
+	sm_config_set_out_shift(&config, false, true, 32);
 
 	pio_sm_init(pio, state_machine, offset, &config);
 }
