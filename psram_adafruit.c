@@ -95,9 +95,6 @@ void write_voltage(uint32_t addr, float V){
 uint32_t load_dac(uint32_t addr){
 	pio_sm_put_blocking(pio0, state_machine, 0x03000000 | addr);
 	pio_sm_put_blocking(pio0, state_machine, 0x00000017);
-	gpio_put(LDAC_PIN, 0);
-	sleep_us(1);
-	gpio_put(LDAC_PIN, 1);
 	return pio_sm_get_blocking(pio0, state_machine);
 }
 
@@ -117,9 +114,6 @@ int main(){
 	stdio_init_all();
 	gpio_init(LED_PIN);
 	gpio_set_dir(LED_PIN, GPIO_OUT);
-	gpio_init(LDAC_PIN);
-	gpio_set_dir(LDAC_PIN, GPIO_OUT);
-	gpio_put(LDAC_PIN, 1);
 	sleep_ms(2000);
 	gpio_put(LED_PIN, 1);
 
@@ -130,8 +124,11 @@ int main(){
 	while(1){
 		printf("Loading data to RAM\n");
 		setup_write();
-		for(int i = 0; i < 2000; i++){
-			write_voltage(i*3, (float) (1999 - i) / 2000.0 * V_MAX);
+		for(int i = 0; i < 1000; i++){
+			write_voltage(i*3, (float) (999 - i) / 1000.0 * V_MAX);
+		}
+		for(int i = 0; i < 1000; i++){
+			write_voltage(i*3 + 1000*3, (float) i / 1000.0 * V_MAX);
 		}
 
 		printf("Sending data to output\n");

@@ -17,19 +17,20 @@ send_loop:
 ; Bulk read data over SPI, copying to passthru device
 ; First 4 bytes are length in bits (stored in x)
 ; Then write command + address, finally data
-.side_set 4
+.side_set 5
 
 .wrap_target
-	pull block side 10			; wait for new start address
-	set x 31 side 8
+	pull block side 0x1A		; wait for new start address
+	set x 31 side 0x18
 addr_send: 						; send read command + address (5 bytes) to chip via QSPI
-	out pins 1 side 8
-	jmp x-- addr_send side 9
-	out x 32 side 0				; load length count
+	out pins 1 side 0x18
+	jmp x-- addr_send side 0x19
+	out x 32 side 0x10			; load length count
 data_recv:
-	in pins 1 side 5
-	jmp x-- data_recv side 0
-	push side 10
+	in pins 1 side 0x15
+	jmp x-- data_recv side 0x10
+	push side 0x1A
+	nop side 0x0A				; LDAC low to load
 .wrap
 
 % c-sdk {
@@ -49,7 +50,7 @@ void spi_write_program_init(PIO pio, uint state_machine, uint offset,
 	pio_gpio_init(pio, sclk_pin);
 	pio_gpio_init(pio, sclk_pin + 1);
 
-	sm_config_set_clkdiv(&config, 32.f);
+	sm_config_set_clkdiv(&config, 12.f);
 
 	sm_config_set_in_shift(&config, false, true, 32);
 	sm_config_set_out_shift(&config, false, true, 32);
@@ -66,9 +67,9 @@ void spi_read_passthru_program_init(PIO pio, uint state_machine, uint offset,
  	sm_config_set_set_pins(&config, si_pin, 1);
 	pio_sm_set_consecutive_pindirs(pio, state_machine, si_pin, 1, true);
 
-	// ce_n pin is sclk pin + 1; then duplicate for passthru
+	// ce_n pin is sclk pin + 1; then duplicate for passthru, finally LDAC
  	sm_config_set_sideset_pins(&config, sclk_pin);
-	pio_sm_set_consecutive_pindirs(pio, state_machine, sclk_pin, 4, true);
+	pio_sm_set_consecutive_pindirs(pio, state_machine, sclk_pin, 5, true);
 
 	pio_gpio_init(pio, si_pin);
 	pio_gpio_init(pio, so_pin);
@@ -79,10 +80,11 @@ void spi_read_passthru_program_init(PIO pio, uint state_machine, uint offset,
 	pio_gpio_init(pio, sclk_pin + 1);
 	pio_gpio_init(pio, sclk_pin + 2);
 	pio_gpio_init(pio, sclk_pin + 3);
+	pio_gpio_init(pio, sclk_pin + 4);
 
 	hw_set_bits(&pio->input_sync_bypass, 0x1u << so_pin);
 
-	sm_config_set_clkdiv(&config, 32.f);
+	sm_config_set_clkdiv(&config, 12.f);
 
 	sm_config_set_in_shift(&config, false, true, 32);
 	sm_config_set_out_shift(&config, false, true, 32);
